@@ -10,20 +10,20 @@ def load_data(datapath):
     csv_path = os.path.abspath(datapath)
     return pd.read_csv(csv_path, header=None)
 
-def data_split(dataset):
+def data_shuffle(dataset):
     #shuffling dataset
     dataset = dataset.sample(frac=1).reset_index(drop=True)
+    return dataset
     
-    #splitting train/test
-    train = dataset.sample(frac=0.8)
-    val = dataset.drop(train.index)
+def cross_val_folds(dataset, fold, n_folds):
+    n = len(dataset)
+    return dataset[n*(fold-1)//n_folds : n*fold//n_folds]
 
+def split_labels(dataset):
     #splitting attributes/labels
-    train_y = train.iloc[:,0]
-    train_x = train.drop(0, axis=1)
-    val_y = val.iloc[:,0]
-    val_x = val.drop(0, axis=1)
-    return train_x, train_y, val_x, val_y
+    y = dataset.iloc[:,0]
+    x = dataset.drop(0, axis=1)
+    return x, y
 
 def standardize(df):
     df_stand = df.copy()
@@ -42,6 +42,38 @@ def onehotencode(series):
         if vector[i] == 3:
             encoded[i] = np.array([0,0,1])
     return encoded
+
+
+def main(datapath):
+    #loading and shuffling dataset
+    dataset = data_shuffle(load_data(datapath))
+    
+    #five CV Runs
+    for fold in range(1,6):
+
+        #creating validation and test sets
+        val_set = cross_val_folds(dataset, fold, 5)
+        train_set = dataset.drop(val_set.index)
+
+        #splitting attributes from labels
+        train_x, train_y = split_labels(train_set)
+        val_x, val_y = split_labels(val_set)
+
+        #one-hot-encoding labels
+        train_y_hot = onehotencode(train_y)
+        val_y_hot = onehotencode(val_y)
+
+        # standardizing attributes
+        train_x_stand = standardize(train_x)
+        val_x_stand = standardize(val_x)
+
+        #initializing MLP to be trained 
+        myMLP = MLP(4,13,3,0.01,300)
+
+        myMLP.fit(train_x_stand, train_y_hot, val_x_stand, val_y_hot)
+
+    pass
+    # return prediction
 
 #---------------------------------------------------------------------------------------
 # MLP
@@ -169,21 +201,6 @@ class MLP:
             print(f'Epoch {epoch} - Training SSE: {train_sse}, Validation SSE: {val_sse}')
             pass
 
-
-def main(datapath):
-    #splitting dataset
-    train_x, train_y, val_x, val_y = data_split(load_data(datapath))
-
-    #standardizing attributes
-    train_x_stand, val_x_stand = standardize(train_x), standardize(val_x)
-
-    #one-hot-encoding labels
-    train_y_hot = onehotencode(train_y)
-    val_y_hot = onehotencode(val_y)
-    myMLP = MLP(4,13,3,0.01,1000)
-    myMLP.fit(train_x_stand, train_y_hot, val_x_stand, val_y_hot)
-    pass
-    # return prediction
 
 
 # deriv of sigmoid: lambda z: (1/(1 + np.exp(-z)))*(1-(1/(1 + np.exp(-z))))
