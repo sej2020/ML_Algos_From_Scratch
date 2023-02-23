@@ -1,79 +1,5 @@
 import pandas as pd
 import numpy as np
-import os
-
-
-#------------------------------------------------------------------------
-# DATA PREPROCESSING
-#------------------------------------------------------------------------
-def load_data(datapath):
-    csv_path = os.path.abspath(datapath)
-    return pd.read_csv(csv_path, header=None)
-
-def data_shuffle(dataset):
-    #shuffling dataset
-    dataset = dataset.sample(frac=1).reset_index(drop=True)
-    return dataset
-    
-def cross_val_folds(dataset, fold, n_folds):
-    n = len(dataset)
-    return dataset[n*(fold-1)//n_folds : n*fold//n_folds]
-
-def split_labels(dataset):
-    #splitting attributes/labels
-    y = dataset.iloc[:,0]
-    x = dataset.drop(0, axis=1)
-    return x, y
-
-def standardize(df):
-    df_stand = df.copy()
-    for column in df_stand.columns:
-        df_stand[column] = (df_stand[column] - df_stand[column].mean()) / df_stand[column].std()    
-    return df_stand
-
-def onehotencode(series):
-    vector = np.array(series)
-    encoded = np.zeros(shape=(len(vector),3))
-    for i in range(len(vector)):
-        if vector[i] == 1:
-            encoded[i] = np.array([1,0,0])
-        if vector[i] == 2:
-            encoded[i] = np.array([0,1,0])
-        if vector[i] == 3:
-            encoded[i] = np.array([0,0,1])
-    return encoded
-
-
-def main(datapath):
-    #loading and shuffling dataset
-    dataset = data_shuffle(load_data(datapath))
-    
-    #five CV Runs
-    for fold in range(1,6):
-
-        #creating validation and test sets
-        val_set = cross_val_folds(dataset, fold, 5)
-        train_set = dataset.drop(val_set.index)
-
-        #splitting attributes from labels
-        train_x, train_y = split_labels(train_set)
-        val_x, val_y = split_labels(val_set)
-
-        #one-hot-encoding labels
-        train_y_hot = onehotencode(train_y)
-        val_y_hot = onehotencode(val_y)
-
-        # standardizing attributes
-        train_x_stand = standardize(train_x)
-        val_x_stand = standardize(val_x)
-
-        #initializing MLP to be trained 
-        myMLP = MLP(4,13,3,0.01,300)
-
-        myMLP.fit(train_x_stand, train_y_hot, val_x_stand, val_y_hot)
-
-    pass
-    # return prediction
 
 #---------------------------------------------------------------------------------------
 # MLP
@@ -85,7 +11,7 @@ class MLP:
         self.n_hidden = n_hidden #4
         self.n_input = n_input_feat #13
         self.n_output = n_classes #3
-        self.lr = learning_rate #0.0001
+        self.lr = learning_rate #0.01
         self.epochs = epochs #40
 
         self.v = np.random.uniform(size=((self.n_input+1)*self.n_hidden,1))
@@ -130,7 +56,6 @@ class MLP:
         a = np.append(np.array([[1]]), a, axis=0)
         a1 = np.ndarray.copy(a)
         y = self.softmax(self.output_layer(a1, self.w))
-        # print(f'This is y: {y}')
         return (x,a,y)
      
     def delta_output(self, prediction, label):
@@ -148,25 +73,39 @@ class MLP:
             delt_hidd[j] = a[j]*(1-a[j])*loc_sum
         return delt_hidd
 
-    # def error(self, predictions, labels):
-    #     sse = 0
-    #     for i, j in zip(predictions, labels):
-    #         sse += (i - j)**2
-    #         print(f'i:{i}, j:{j}, new sse: {sse}')
-    #     return sse*0.5
+    def predict(self, attributes):
+        prediction = np.zeros(shape=(len(attributes.index),1))
+        for i in range(len(attributes.index)):
+            x, a, y = self.forward(attributes.iloc[i])
+            for j in range(len(y)):
+                if y[j] == np.amax(y):
+                    prediction[i] = j+1
+        return prediction
+
 
     def fit(self, train_attrib, train_labels, val_attrib, val_labels):
 
+        train_results = []
+        val_results = []
+
         for epoch in range(self.epochs):
-            train_err, val_err = 0., 0.
+
+            train_missed, val_missed = 0., 0.
 
             for i in range(len(train_attrib)):
 
                 tr_label =  np.array(train_labels[i]).reshape(self.n_output,1)
 
-                #forward pass for training data and updating error term
+                #forward pass for training data
                 x, a, y  = self.forward(train_attrib.iloc[i])
-                train_err += np.mean((y-tr_label)**2).item()
+
+                #updating error term
+                tr_pred_one_hot = np.zeros(shape=np.shape(y))
+                for i in range(len(y)):
+                    if y[i] == np.amax(y):
+                        tr_pred_one_hot[i] = 1
+                if not np.array_equal(tr_pred_one_hot, tr_label):
+                    train_missed += 1
 
                 #calculating gradients
                 delt_out = self.delta_output(y,tr_label) #tensor of shape len(self.n_output)
@@ -190,26 +129,26 @@ class MLP:
                 self.w = new_w
                 self.v = new_v
             
+            #forward pass for validation set
             for j in range(len(val_attrib)):
                 val_label =  np.array(val_labels[j]).reshape(self.n_output,1)
                 val_x, val_a, val_y  = self.forward(val_attrib.iloc[j])
-                val_err += np.mean((val_y-val_label)**2).item()
-                    
-            train_sse = train_err*0.5/len(train_attrib)
-            val_sse = val_err*0.5/len(val_attrib)
 
-            print(f'Epoch {epoch} - Training SSE: {train_sse}, Validation SSE: {val_sse}')
-            pass
+            #updating error term for validation set
+                val_pred_one_hot = np.zeros(shape=np.shape(val_y))
+                for i in range(len(val_y)):
+                    if val_y[i] == np.amax(val_y):
+                        val_pred_one_hot[i] = 1
+                if not np.array_equal(val_pred_one_hot, val_label):
+                    val_missed += 1
 
+            #calculating accuracy  
+            train_acc = 1 - train_missed/len(train_attrib)
+            val_acc = 1 - val_missed/len(val_attrib)
+            train_results.append(train_acc)
+            val_results.append(val_acc)
 
-
-# deriv of sigmoid: lambda z: (1/(1 + np.exp(-z)))*(1-(1/(1 + np.exp(-z))))
-
-main('MLP_Classifier\wine.data')
-
-#try shifted softmax if i can get this to work
-
-    # def one_hot(self, vector):
-    #     for entry in range(len(vector)):
-    #         vector[entry] = 1 if vector[entry] == max(vector) else 0
-    #     return np.reshape(vector,(1,3))
+            if epoch == self.epochs - 1:
+                print(f'Final Epoch ({epoch}) - Training Accuracy: {train_acc}, Validation Accuracy: {val_acc}')
+        
+        return train_results, val_results
